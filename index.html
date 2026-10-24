@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Weather Atlas</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#172b42;background:#f1f5f7}body{max-width:1200px;margin:auto;padding:32px 20px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap}h1{font-size:2.7rem;margin:0}p,small{color:#526476}a{color:#075b81}button,.download{border:0;background:#075b81;color:white;border-radius:10px;padding:12px 18px;cursor:pointer;text-decoration:none;font:inherit}nav{display:flex;gap:10px;flex-wrap:wrap;margin:28px 0}nav button{background:white;color:#172b42;border:1px solid #b8c8d2}nav button[aria-pressed=true]{background:#172b42;color:white}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:18px}article{background:white;padding:24px;border-radius:16px;border:1px solid #dbe4e9}h2{margin-top:0}.temp{font-size:2.5rem;font-weight:700}table{width:100%;border-collapse:collapse;font-size:.85rem;margin-top:18px}th,td{text-align:left;padding:8px 3px;border-bottom:1px solid #edf1f3}pre{white-space:pre-wrap;font:inherit;line-height:1.65;background:white;border-radius:16px;padding:24px}footer{margin-top:32px;line-height:1.8}.error{color:#a12a26}#status{min-height:24px}
+</style></head><body>
+<header><div><small>YOUR GLOBAL WEATHER DESK</small><h1>Weather Atlas</h1><p>Four regions. Twelve cities. A clearer week ahead.</p></div><a class="download" href="/newsletter.md">Download weekly brief ↓</a></header>
+<p id="status" role="status">Collecting public forecasts… First load can take up to 30 seconds.</p>
+<nav aria-label="Regions" id="regions"></nav><main><div id="cards" class="grid"></div><h2>Official weather channels</h2><p id="channels"></p><p>These links open official sources. Their feeds and alerts are not collected here.</p><details><summary>Preview the weekly newsletter</summary><pre id="brief">Loading…</pre></details></main>
+<footer>Forecasts: <a href="https://open-meteo.com/">Open-Meteo</a> · <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>. Celsius · rain in mm · wind in km/h.<br>Representative cities only; forecasts do not describe entire regions. Check local official warnings before making safety decisions.</footer>
+<script>
+let data, selected='Americas';
+const $=id=>document.getElementById(id);
+function node(tag,text){const n=document.createElement(tag);n.textContent=text;return n;}
+function render(){
+ $('regions').replaceChildren();
+ for(const region of Object.keys(data.channels)){const b=node('button',region);b.setAttribute('aria-pressed',String(region===selected));b.onclick=()=>{selected=region;render()};$('regions').append(b)}
+ $('cards').replaceChildren();
+ for(const city of data.cities.filter(c=>c.region===selected)){
+  const card=document.createElement('article');card.append(node('h2',city.city));
+  if(city.error){card.append(node('p',city.error));$('cards').append(card);continue}
+  const temp=node('div',city.current.temperature_2m==null?'Unavailable':city.current.temperature_2m+' °C');temp.className='temp';card.append(temp,node('p','Current model estimate · '+city.current.time.replace('T',' ')+' · '+city.timezone));
+  const table=document.createElement('table');const head=document.createElement('tr');for(const label of ['Date','Low / High °C','Rain mm'])head.append(node('th',label));table.append(head);
+  for(const day of city.days){const row=document.createElement('tr');for(const text of [day.date.slice(5),day.low+' / '+day.high,day.rain])row.append(node('td',text));table.append(row)}card.append(table);$('cards').append(card);
+ }
+ $('channels').replaceChildren();for(const [name,url] of data.channels[selected]){const a=node('a',name);a.href=url;$('channels').append(a,document.createTextNode(' · '))}
+}
+async function load(){
+ try{const response=await fetch('/api/weather');if(!response.ok)throw Error();data=await response.json();render();const failed=data.cities.filter(c=>c.error).length;$('status').textContent='Collected '+new Date(data.generated_at).toLocaleString()+' · '+(data.cities.length-failed)+'/12 cities available · refreshes every 30 minutes.';const brief=await fetch('/newsletter.md');if(!brief.ok)throw Error();$('brief').textContent=await brief.text()}
+ catch(error){$('status').textContent='Could not load weather. Check the server’s internet access and reload to retry.'}
+}
+load();setInterval(load,1800000);
+</script></body></html>
