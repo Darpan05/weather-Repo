@@ -9,6 +9,9 @@ import app
 class WeatherTests(unittest.TestCase):
     def setUp(self):
         app.CACHE = None
+        feed_patch = patch.object(app, "collect_feeds", return_value=[])
+        feed_patch.start()
+        self.addCleanup(feed_patch.stop)
         self.forecast = {'current':{'temperature_2m':20,'time':'2026-10-24T12:00'},'timezone':'UTC',
             'daily':{'time':['2026-10-{:02}'.format(i) for i in range(24,31)],
                 'temperature_2m_max':[25]*7,'temperature_2m_min':[10]*7,
@@ -41,6 +44,26 @@ class WeatherTests(unittest.TestCase):
         self.forecast['daily']['precipitation_sum'][0] = None
         with patch.object(app,'urlopen',side_effect=self.fake_response):
             self.assertTrue(app.fetch_city(('India',app.CITIES['India'][0]))['error'])
+
+    def test_rss_and_atom(self):
+        rss = b'<rss><channel><item><title>Rain news</title><link>https://example.com/news</link></item><item><title>Duplicate</title><link>https://example.com/news</link></item><item><title>Unsafe</title><link>javascript:alert(1)</link></item><item><title>Old</title><link>https://example.com/old</link><pubDate>Mon, 01 Jan 2001 00:00:00 GMT</pubDate></item></channel></rss>'
+        articles = app.parse_feed(rss, 'https://example.com/rss')
+        self.assertEqual(len(articles), 1)
+        self.assertIsNone(articles[0]['published'])
+        atom = b'<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Forecast</title><link href="/news"/></entry></feed>'
+        self.assertEqual(app.parse_feed(atom, 'https://example.com/feed')[0]['url'], 'https://example.com/news')
+        with self.assertRaises(ValueError):
+            app.parse_feed(b'<!DOCTYPE rss><rss/>', 'https://example.com')
+        with patch.object(app, 'urlopen', side_effect=OSError('offline')):
+            result = app.fetch_feed({'name':'Test','region':'India','url':'https://example.com/rss'})
+        self.assertTrue(result['error'])
+        self.assertEqual(result['articles'], [])
+
+    def test_newsletter_includes_feed_provenance(self):
+        data = {'generated_at':'now','cities':[], 'feeds':[{'region':'India','source':'Test source','articles':[{'title':'Rain news','url':'https://example.com/news','published':None}], 'error':None}]}
+        brief = app.newsletter(data)
+        self.assertIn('Test source',brief)
+        self.assertIn('Rain news — Date unavailable — https://example.com/news',brief)
 
     def test_http(self):
         with patch.object(app,'urlopen',side_effect=self.fake_response):

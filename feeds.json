@@ -1,0 +1,6 @@
+[
+  {"region":"Americas","name":"NOAA NHC — Atlantic tropical bulletins","url":"https://www.nhc.noaa.gov/index-at.xml"},
+  {"region":"EMEA","name":"BBC Weather — London forecast","url":"https://weather-broker-cdn.api.bbci.co.uk/en/forecast/rss/3day/2643743"},
+  {"region":"India","name":"BBC Weather — New Delhi forecast","url":"https://weather-broker-cdn.api.bbci.co.uk/en/forecast/rss/3day/1261481"},
+  {"region":"Asia Pacific & Japan","name":"BBC Weather — Tokyo forecast","url":"https://weather-broker-cdn.api.bbci.co.uk/en/forecast/rss/3day/1850147"}
+]

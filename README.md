@@ -23,7 +23,7 @@ The dashboard previews and downloads a Markdown brief covering all four regions.
 python3 app.py --newsletter weekly-weather.md
 ```
 
-This command returns exit code 1 if any city is unavailable, while preserving a clearly marked partial brief. This is a rolling seven-day forecast, not a historical report. Weather API data is fetched when generating an edition.
+This command returns exit code 1 if any city or configured feed is unavailable, while preserving a clearly marked partial brief. This is a rolling seven-day forecast, not a historical report. Weather API data is fetched when generating an edition.
 
 For automatic weekly files on Raspberry Pi OS, create an output folder (`mkdir -p "$HOME/weather-newsletters"`) and add this example with `crontab -e`. Replace `/home/pi/weather-Repo` with your actual absolute checkout path. It runs every Monday at 08:00 in the Pi's configured timezone:
 
@@ -35,9 +35,9 @@ The app does not send email or subscribe recipients. You can share the downloade
 
 ## Public sources and channels
 
-Forecasts: [Open-Meteo Forecast API](https://open-meteo.com/en/docs), attributed under CC BY 4.0. The free endpoint is intended for noncommercial use and subject to provider limits; check its terms before commercial deployment. Only `api.open-meteo.com` needs outbound access for data collection. TLS verification remains enabled.
+Forecasts: [Open-Meteo Forecast API](https://open-meteo.com/en/docs), attributed under CC BY 4.0. The free endpoint is intended for noncommercial use and subject to provider limits; check its terms before commercial deployment. Outbound data access requires `api.open-meteo.com`, `www.nhc.noaa.gov`, and `weather-broker-cdn.api.bbci.co.uk` for the default configuration. TLS verification remains enabled.
 
-Regional official channels are linked in the dashboard and newsletter: NWS/NHC, Met Office/Meteoalarm, IMD, JMA, and BOM. Their feeds are **not ingested**; this version collects forecast API data only. It does not supply official warning coverage.
+Regional official channels are linked in the dashboard and newsletter: NWS/NHC, Met Office/Meteoalarm, IMD, JMA, and BOM. Reference links are supplemented by RSS/Atom feeds configured in `feeds.json`. It does not supply official warning coverage.
 
 ## Validation
 
@@ -47,4 +47,12 @@ python3 -m unittest -v
 python3 app.py --newsletter /tmp/weekly-weather.md
 ```
 
-The four automated tests use controlled API responses to verify collection, caching, newsletter calculations, missing data handling, and HTTP routes. The second command checks real provider access; verify it exits 0 and contains all cities before relying on live collection. Cloud onboarding's network proxy blocked the provider with HTTP 403 during initial development, so live collection was not verified there.
+The six automated tests use controlled API responses to verify collection, caching, newsletter calculations, missing data handling, and HTTP routes. The second command checks real provider access; verify it exits 0 and contains all cities before relying on live collection. Cloud onboarding's network proxy blocked the provider with HTTP 403 during initial development, so live collection was not verified there.
+
+## RSS and Atom sources
+
+`feeds.json` defines the region, source name, and feed URL. The defaults are NOAA NHC Atlantic tropical bulletins and BBC Weather city forecast feeds for London, New Delhi, and Tokyo. These are limited regional snapshots, not comprehensive regional news. BBC entries are forecast headlines, not editorial news. You can add official or other publicly available RSS 2.0 / Atom feeds by editing this file and restarting the server; up to 20 feeds are supported. No subscription or API key is required by these configured feeds.
+
+The dashboard and newsletter display up to five entries per source, preserving attribution and original links. Entries dated more than seven days ago are omitted. Undated entries are explicitly marked “Date unavailable” and may be older. Source order is preserved; dates are displayed as supplied by the feed. Full articles are not copied. Follow each publisher’s terms for redistribution.
+
+Feeds share the 30-minute collection cache. Timeouts, invalid XML, oversized feeds, and unavailable sources produce explicit errors without hiding the other data. TLS verification stays enabled. Initial collection can take roughly 36 seconds when both forecasts and feeds time out. Configured feeds were blocked by this cloud environment's network proxy during development, so their live contents remain unverified. Six automated tests validate parsing, deduplication, old-item filtering, unsafe link rejection, RSS/Atom support, newsletter attribution, and graceful outages alongside forecast checks.

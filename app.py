@@ -3,13 +3,15 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
-import html
+import re
+import xml.etree.ElementTree as ET
+from email.utils import parsedate_to_datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import threading
 import time
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urljoin, urlsplit
 from urllib.request import Request, urlopen
 
 CITIES = {
@@ -27,6 +29,87 @@ CHANNELS = {
 CACHE = None
 LOCK = threading.Lock()
 TTL = 1800
+
+
+FEEDS_FILE = Path(__file__).with_name('feeds.json')
+
+
+def safe_url(value):
+    return urlsplit(value).scheme in ('http', 'https') and bool(urlsplit(value).hostname)
+
+
+def plain_text(value):
+    # Titles are treated as text in the browser, never inserted as HTML.
+    return re.sub(r'<[^>]*>', '', value or '').strip()[:500]
+
+
+def parse_feed(payload, base_url):
+    if b'<!DOCTYPE' in payload.upper() or b'<!ENTITY' in payload.upper():
+        raise ValueError('XML declarations with entities are unsupported')
+    root = ET.fromstring(payload)
+    atom = '{http://www.w3.org/2005/Atom}'
+    entries = root.findall('./channel/item') if root.tag == 'rss' else root.findall(atom + 'entry')
+    if root.tag not in ('rss', atom + 'feed'):
+        raise ValueError('Expected RSS 2.0 or Atom')
+    articles, seen = [], set()
+    cutoff = datetime.now(timezone.utc).timestamp() - 7 * 86400
+    for entry in entries:
+        is_atom = entry.tag == atom + 'entry'
+        prefix = atom if is_atom else ''
+        title = plain_text(entry.findtext(prefix + 'title'))
+        if is_atom:
+            link = next((n.get('href','') for n in entry.findall(atom + 'link')
+                         if n.get('rel','alternate') == 'alternate'), '')
+            date = entry.findtext(atom + 'published') or entry.findtext(atom + 'updated')
+        else:
+            link = entry.findtext('link', '')
+            date = entry.findtext('pubDate')
+        link = urljoin(base_url, link.strip()) if link.strip() else ''
+        if not title or not safe_url(link) or link in seen:
+            continue
+        published = None
+        if date:
+            try:
+                stamp = (datetime.fromisoformat(date.replace('Z','+00:00')) if is_atom
+                         else parsedate_to_datetime(date))
+                if stamp.tzinfo is None:
+                    stamp = stamp.replace(tzinfo=timezone.utc)
+                if stamp.timestamp() < cutoff:
+                    continue
+                published = stamp.isoformat()
+            except (ValueError, TypeError, OverflowError):
+                pass
+        seen.add(link)
+        articles.append({'title':title,'url':link,'published':published})
+    articles.sort(key=lambda a:a['published'] or '', reverse=True)
+    return articles[:5]
+
+
+def fetch_feed(config):
+    result = dict(region=config['region'], source=config['name'], url=config['url'], articles=[])
+    try:
+        if not safe_url(config['url']):
+            raise ValueError('Invalid feed URL')
+        request = Request(config['url'], headers={'User-Agent':'WeatherAtlas/1.0 (RSS reader)'})
+        with urlopen(request, timeout=12) as response:
+            payload = response.read(1024 * 1024 + 1)
+        if len(payload) > 1024 * 1024:
+            raise ValueError('Feed exceeds 1 MiB')
+        result.update(articles=parse_feed(payload, config['url']), error=None)
+    except Exception:
+        result['error'] = 'Feed unavailable or unsupported; no headlines collected.'
+    return result
+
+
+def collect_feeds():
+    configs = json.loads(FEEDS_FILE.read_text(encoding='utf-8'))
+    if not isinstance(configs, list) or len(configs) > 20:
+        raise ValueError('feeds.json must contain at most 20 feed entries')
+    for config in configs:
+        if config.get('region') not in CITIES or not config.get('name') or not safe_url(config.get('url','')):
+            raise ValueError('Each feed needs a known region, name, and HTTP(S) URL')
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        return list(pool.map(fetch_feed, configs))
 
 
 def fetch_city(item):
@@ -62,7 +145,7 @@ def collect():
         with ThreadPoolExecutor(max_workers=6) as pool:
             cities = list(pool.map(fetch_city, items))
         CACHE = {'fetched_epoch':time.time(), 'generated_at':datetime.now(timezone.utc).isoformat(),
-                 'cities':cities,'channels':CHANNELS,'source':'Open-Meteo','refresh_seconds':TTL}
+                 'feeds':collect_feeds(),'cities':cities,'channels':CHANNELS,'source':'Open-Meteo','refresh_seconds':TTL}
         return CACHE
 
 
@@ -81,7 +164,20 @@ def newsletter(data):
             lines += ['- **{}** ({} to {}): lows {:.1f}–highs {:.1f} °C; total forecast rain {:.1f} mm; peak wind {:.1f} km/h. Wettest day: {} ({:.1f} mm).'.format(
                 city['city'],days[0]['date'],days[-1]['date'],min(d['low'] for d in days),
                 max(d['high'] for d in days),sum(d['rain'] for d in days),max(d['wind'] for d in days),wettest['date'],wettest['rain'])]
-        lines += ['', 'Official weather channels (links; their feeds are not ingested):']
+        lines += ['', '### RSS / Atom headlines (past seven days where dated)', '']
+        feeds = [f for f in data.get('feeds', []) if f['region'] == region]
+        for feed in feeds:
+            lines += ['Source: ' + feed['source']]
+            if feed.get('error'):
+                lines += ['- ' + feed['error']]
+            elif not feed['articles']:
+                lines += ['- No recent entries returned.']
+            for article in feed['articles']:
+                title = re.sub(r'[\[\]<>`*]', '', article['title']).replace('\n', ' ')
+                lines += ['- {} — {} — {}'.format(title, article['published'] or 'Date unavailable', article['url'])]
+        if not feeds:
+            lines += ['No feeds configured for this region.']
+        lines += ['', 'Official weather channels (reference links):']
         lines += ['- [{}]({})'.format(name,url) for name,url in CHANNELS[region]]
         lines += ['']
     lines += ['Forecast data: [Open-Meteo](https://open-meteo.com/) — [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).',
@@ -117,12 +213,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host',default='127.0.0.1')
     parser.add_argument('--port',type=int,default=8080)
-    parser.add_argument('--newsletter',metavar='FILE',help='Write a Markdown brief and exit; returns 1 if any city failed')
+    parser.add_argument('--newsletter',metavar='FILE',help='Write a Markdown brief and exit; returns 1 if any city or feed failed')
     args = parser.parse_args()
     if args.newsletter:
         data = collect()
         Path(args.newsletter).write_text(newsletter(data),encoding='utf-8')
-        return int(any(c.get('error') for c in data['cities']))
+        return int(any(c.get('error') for c in data['cities'] + data['feeds']))
     server = ThreadingHTTPServer((args.host,args.port),Handler)
     print('Weather dashboard listening on {}:{}'.format(args.host,args.port),flush=True)
     try:

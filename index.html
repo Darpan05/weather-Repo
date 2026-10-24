@@ -5,7 +5,7 @@
 </style></head><body>
 <header><div><small>YOUR GLOBAL WEATHER DESK</small><h1>Weather Atlas</h1><p>Four regions. Twelve cities. A clearer week ahead.</p></div><a class="download" href="/newsletter.md">Download weekly brief ↓</a></header>
 <p id="status" role="status">Collecting public forecasts… First load can take up to 30 seconds.</p>
-<nav aria-label="Regions" id="regions"></nav><main><div id="cards" class="grid"></div><h2>Official weather channels</h2><p id="channels"></p><p>These links open official sources. Their feeds and alerts are not collected here.</p><details><summary>Preview the weekly newsletter</summary><pre id="brief">Loading…</pre></details></main>
+<nav aria-label="Regions" id="regions"></nav><main><div id="cards" class="grid"></div><h2>RSS &amp; Atom headlines</h2><div id="headlines"></div><h2>Official weather channels</h2><p id="channels"></p><p>Reference links to local authorities. RSS headlines above supplement the forecasts; coverage is limited to configured sources.</p><details><summary>Preview the weekly newsletter</summary><pre id="brief">Loading…</pre></details></main>
 <footer>Forecasts: <a href="https://open-meteo.com/">Open-Meteo</a> · <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>. Celsius · rain in mm · wind in km/h.<br>Representative cities only; forecasts do not describe entire regions. Check local official warnings before making safety decisions.</footer>
 <script>
 let data, selected='Americas';
@@ -21,6 +21,14 @@ function render(){
   const temp=node('div',city.current.temperature_2m==null?'Unavailable':city.current.temperature_2m+' °C');temp.className='temp';card.append(temp,node('p','Current model estimate · '+city.current.time.replace('T',' ')+' · '+city.timezone));
   const table=document.createElement('table');const head=document.createElement('tr');for(const label of ['Date','Low / High °C','Rain mm'])head.append(node('th',label));table.append(head);
   for(const day of city.days){const row=document.createElement('tr');for(const text of [day.date.slice(5),day.low+' / '+day.high,day.rain])row.append(node('td',text));table.append(row)}card.append(table);$('cards').append(card);
+ }
+ $('headlines').replaceChildren();
+ for(const feed of (data.feeds || []).filter(f=>f.region===selected)){
+  const card=document.createElement('article');card.append(node('h3',feed.source));
+  if(feed.error)card.append(node('p',feed.error));
+  else if(!feed.articles.length)card.append(node('p','No recent entries returned.'));
+  for(const item of feed.articles){const p=document.createElement('p');const a=node('a',item.title);a.href=item.url;p.append(a,node('small',' · '+(item.published?new Date(item.published).toLocaleString():'Date unavailable')));card.append(p)}
+  $('headlines').append(card);
  }
  $('channels').replaceChildren();for(const [name,url] of data.channels[selected]){const a=node('a',name);a.href=url;$('channels').append(a,document.createTextNode(' · '))}
 }
